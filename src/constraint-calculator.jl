@@ -2,7 +2,7 @@
 @enum PARTITION_METHOD degree annealing
 
 # This function takes in a table and outputs an approximate
-function _degree_based_partition(data, order::Int)
+function _degree_based_partition(data::Vector{Vector{String}}, order::Int)
     attribute_set = collect(1:length(data[1]))
     Xs = Set([X for X in combinations(attribute_set, order)])
     degrees = counter(Any)
@@ -49,7 +49,7 @@ function _degree_based_partition(data, order::Int)
     return (max_gdc=max_gdc, partition_dcs=partition_dcs, regular_dcs=regular_dcs, partitions=partitions)
 end
 
-function _annealing_based_partition(data, order::Int)
+function _annealing_based_partition(data::Vector{Vector{String}}, order::Int)
     attribute_set = collect(1:length(data[1]))
     Xs = Set([X for X in combinations(attribute_set, order)])
     degrees = counter(Any)
@@ -127,7 +127,17 @@ function _annealing_based_partition(data, order::Int)
 end
 
 
+function make_attributes_disjoint(data)
+    new_data = []
+    for tuple in data
+        new_tuple = [string(tuple[i]) * "_" * string(i) for i in eachindex(tuple)]
+        push!(new_data, new_tuple)
+    end
+    return new_data
+end
+
 function get_constraint_and_partition(data, order::Int; method::PARTITION_METHOD=degree)
+    data::Vector{Vector{String}} = make_attributes_disjoint(data)
     if method == degree
         return _degree_based_partition(data, order)
     elseif method == annealing
