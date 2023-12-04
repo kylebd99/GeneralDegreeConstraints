@@ -32,7 +32,7 @@ function _degree_based_partition(data::Vector{Vector{String}}, order::Int)
         for tuple in partition
             inc!(partition_degrees, tuple[X])
         end
-        partition_dc = maximum(values(partition_degrees))
+        partition_dc = maximum(values(partition_degrees); init=0)
         partition_dcs[X] = partition_dc
         max_gdc = max(partition_dc, max_gdc)
     end
@@ -52,19 +52,17 @@ end
 function _annealing_based_partition(data::Vector{Vector{String}}, order::Int)
     attribute_set = collect(1:length(data[1]))
     Xs = Set([X for X in combinations(attribute_set, order)])
-    degrees = counter(Any)
     value_to_tuples = Dict()
     for i in 1:length(data)
         tuple = data[i]
         for X in Xs
             value_to_tuples[tuple[X]] = push!(get(value_to_tuples, tuple[X], []), i)
-            inc!(degrees, tuple[X])
         end
     end
 
     value_queue = PriorityQueue{Any, Int}()
-    for (value, degree) in degrees
-        value_queue[value] = degree
+    for (value, tuples) in value_to_tuples
+        value_queue[value] = length(tuples)
     end
 
     value_order = Dict()
@@ -77,11 +75,9 @@ function _annealing_based_partition(data::Vector{Vector{String}}, order::Int)
                 neighbor_val = tuple[X]
                 tuple[X] == min_val && continue
                 filter!(e->e≠i, value_to_tuples[neighbor_val])
-
                 value_to_tuples[tuple[X]] = push!(get(value_to_tuples, tuple[X], []), i)
-                dec!(degrees, neighbor_val)
                 if neighbor_val in keys(value_queue)
-                    value_queue[neighbor_val] = degrees[neighbor_val]
+                    value_queue[neighbor_val] = length(value_to_tuples[neighbor_val])
                 end
             end
         end
@@ -109,7 +105,7 @@ function _annealing_based_partition(data::Vector{Vector{String}}, order::Int)
         for tuple in partition
             inc!(partition_degrees, tuple[X])
         end
-        partition_dc = maximum(values(partition_degrees))
+        partition_dc = maximum(values(partition_degrees);init=0)
         partition_dcs[X] = partition_dc
         max_gdc = max(partition_dc, max_gdc)
     end
@@ -136,8 +132,34 @@ function make_attributes_disjoint(data)
     return new_data
 end
 
+function remove_key_attributes(data)
+    attribute_set = collect(1:length(data[1]))
+    regular_dcs = Dict()
+    for X in attribute_set
+        degrees = counter(Any)
+        for tuple in data
+            inc!(degrees, tuple[X])
+        end
+        regular_dcs[X] = maximum(values(degrees))
+    end
+
+    non_key_attributes = []
+    for (attribute, degree) in regular_dcs
+        if degree > 1
+            push!(non_key_attributes, attribute)
+        end
+    end
+
+    new_data = []
+    for tuple in data
+        push!(new_data, tuple[non_key_attributes])
+    end
+    return new_data
+end
+
 function get_constraint_and_partition(data, order::Int; method::PARTITION_METHOD=degree)
     data::Vector{Vector{String}} = make_attributes_disjoint(data)
+    data = remove_key_attributes(data)
     if method == degree
         return _degree_based_partition(data, order)
     elseif method == annealing

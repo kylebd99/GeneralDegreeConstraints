@@ -5,11 +5,9 @@ datasets = [
             "data/yeast.csv",
             "data/aids.csv",
             "data/dblp.csv",
-            "data/movie_keyword.csv",
+            "data/postLinks.csv",
+            "data/comments.csv",
 ]
-
-
-datasets = ["data/movie_keyword.csv"]
 
 for dataset in datasets
     data = csv_to_vec_of_vec(dataset)
