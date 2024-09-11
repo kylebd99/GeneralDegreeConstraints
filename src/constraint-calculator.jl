@@ -1,11 +1,11 @@
 
-@enum PARTITION_METHOD greedy degree annealing
+@enum PARTITION_METHOD greedy degree annealing optimal
 
 # This function takes in a table and outputs an approximate
-function _degree_based_partition(data::Vector{Vector{String}}, order::Int)
+function _degree_based_partition(data::Vector{Vector{UInt}}, order::Int)
     attribute_set = collect(1:length(data[1]))
     Xs = Set([X for X in combinations(attribute_set, order)])
-    degrees = counter(Any)
+    degrees = counter(Vector{UInt})
     for tuple in data
         for X in Xs
             inc!(degrees, tuple[X])
@@ -28,7 +28,7 @@ function _degree_based_partition(data::Vector{Vector{String}}, order::Int)
     partition_dcs = Dict()
     max_gdc = -1
     for (X, partition) in partitions
-        partition_degrees = counter(Any)
+        partition_degrees = counter(Vector{UInt})
         for tuple in partition
             inc!(partition_degrees, tuple[X])
         end
@@ -39,7 +39,7 @@ function _degree_based_partition(data::Vector{Vector{String}}, order::Int)
 
     regular_dcs = Dict()
     for X in Xs
-        degrees = counter(Any)
+        degrees = counter(Vector{UInt})
         for tuple in data
             inc!(degrees, tuple[X])
         end
@@ -49,10 +49,10 @@ function _degree_based_partition(data::Vector{Vector{String}}, order::Int)
     return (max_gdc=max_gdc, partition_dcs=partition_dcs, regular_dcs=regular_dcs, partitions=partitions)
 end
 
-function _annealing_based_partition(data::Vector{Vector{String}}, order::Int)
+function _annealing_based_partition(data::Vector{Vector{UInt}}, order::Int)
     attribute_set = collect(1:length(data[1]))
     Xs = Set([X for X in combinations(attribute_set, order)])
-    value_to_tuples = Dict{Vector{String}, Set{Int}}()
+    value_to_tuples = Dict{Vector{UInt}, Set{Int}}()
     for i in 1:length(data)
         tuple = data[i]
         for X in Xs
@@ -101,7 +101,7 @@ function _annealing_based_partition(data::Vector{Vector{String}}, order::Int)
     partition_dcs = Dict()
     max_gdc = -1
     for (X, partition) in partitions
-        partition_degrees = counter(Any)
+        partition_degrees = counter(Vector{UInt})
         for tuple in partition
             inc!(partition_degrees, tuple[X])
         end
@@ -112,7 +112,7 @@ function _annealing_based_partition(data::Vector{Vector{String}}, order::Int)
 
     regular_dcs = Dict()
     for X in attribute_set
-        degrees = counter(Any)
+        degrees = counter(UInt)
         for tuple in data
             inc!(degrees, tuple[X])
         end
@@ -123,35 +123,220 @@ function _annealing_based_partition(data::Vector{Vector{String}}, order::Int)
 end
 
 
-function _greedy_partition(data::Vector{Vector{String}}, order::Int)
+function _greedy_partition(data::Vector{Vector{UInt}}, order::Int)
+    best_gdc = Inf
+    best_partitions = nothing
+    best_partition_dcs = nothing
+    regular_dcs = nothing
+    for i in 1:1
+        shuffle!(data)
+        attribute_set = collect(1:length(data[1]))
+        Xs = Set([X for X in combinations(attribute_set, order)])
+
+        partitions = Dict(X=>[] for X in Xs)
+        partition_counters = Dict(X=>counter(Vector{UInt}) for X in Xs)
+        for tuple in data
+            min_degree = Inf
+            min_X = nothing
+            for X in Xs
+                if min_degree > partition_counters[X][tuple[X]]
+                    min_degree = partition_counters[X][tuple[X]]
+                    min_X = X
+                end
+            end
+            inc!(partition_counters[min_X], tuple[min_X])
+            push!(partitions[min_X], tuple)
+        end
+
+        partition_dcs = Dict()
+        max_gdc = -1
+        for (X, partition) in partitions
+            partition_degrees = counter(Vector{UInt})
+            for tuple in partition
+                inc!(partition_degrees, tuple[X])
+            end
+            partition_dc = maximum(values(partition_degrees); init=0)
+            partition_dcs[X] = partition_dc
+            max_gdc = max(partition_dc, max_gdc)
+        end
+
+        regular_dcs = Dict()
+        for X in Xs
+            degrees = counter(Vector{UInt})
+            for tuple in data
+                inc!(degrees, tuple[X])
+            end
+            regular_dcs[X] = maximum(values(degrees))
+        end
+        if max_gdc < best_gdc
+            best_gdc = max_gdc
+            best_partition_dcs = partition_dcs
+            best_partitions = partitions
+        end
+    end
+    return (max_gdc=best_gdc, partition_dcs=best_partition_dcs, regular_dcs=regular_dcs, partitions=best_partitions)
+end
+
+
+function _process_zero_hop_augmenting_path(tuple, partition_tuple_sets, Xs, overall_min_degree)
+    for X1 in Xs
+        if !haskey(partition_tuple_sets[X1], tuple[X1])
+            partition_tuple_sets[X1][tuple[X1]] = Set([tuple])
+            return true
+        end
+        if length(partition_tuple_sets[X1][tuple[X1]]) < overall_min_degree
+            push!(partition_tuple_sets[X1][tuple[X1]], tuple)
+            return true
+        end
+    end
+    return false
+end
+
+function _process_one_hop_augmenting_path(tuple, partition_tuple_sets, Xs, overall_min_degree)
+    for X1 in Xs
+        for y1 in partition_tuple_sets[X1][tuple[X1]]
+            for X2 in Xs
+                if !haskey(partition_tuple_sets[X2], y1[X2])
+                    partition_tuple_sets[X2][y1[X2]] = Set([y1])
+                    push!(partition_tuple_sets[X1][tuple[X1]], tuple)
+                    delete!(partition_tuple_sets[X1][tuple[X1]], y1)
+                    return true
+                end
+                if length(partition_tuple_sets[X2][y1[X2]]) < overall_min_degree
+                    push!(partition_tuple_sets[X2][y1[X2]], y1)
+                    push!(partition_tuple_sets[X1][tuple[X1]], tuple)
+                    delete!(partition_tuple_sets[X1][tuple[X1]], y1)
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
+function _process_two_hop_augmenting_path(tuple, partition_tuple_sets, Xs, overall_min_degree)
+    visited_ys = Set{UInt}()
+    for X1 in Xs
+        for y1 in partition_tuple_sets[X1][tuple[X1]]
+            for X2 in Xs
+                for y2 in partition_tuple_sets[X2][y1[X2]]
+                    if hash(y2) in visited_ys
+                        continue
+                    end
+                    for X3 in Xs
+                        if !haskey(partition_tuple_sets[X3], y2[X3])
+                            push!(partition_tuple_sets[X1][tuple[X1]], tuple)
+                            delete!(partition_tuple_sets[X1][tuple[X1]], y1)
+                            push!(partition_tuple_sets[X2][y1[X2]], y1)
+                            delete!(partition_tuple_sets[X2][y1[X2]], y2)
+                            partition_tuple_sets[X3][y2[X3]] = Set([y2])
+                            return true
+                        end
+                        if length(partition_tuple_sets[X3][y2[X3]]) < overall_min_degree
+                            push!(partition_tuple_sets[X1][tuple[X1]], tuple)
+                            delete!(partition_tuple_sets[X1][tuple[X1]], y1)
+                            push!(partition_tuple_sets[X2][y1[X2]], y1)
+                            delete!(partition_tuple_sets[X2][y1[X2]], y2)
+                            push!(partition_tuple_sets[X3][y2[X3]], y2)
+                            return true
+                        end
+                    end
+                    push!(visited_ys, hash(y2))
+                end
+            end
+        end
+    end
+    return false
+end
+
+function _process_augmenting_path(tuple, partition_tuple_sets, Xs, overall_min_degree)
+    valid_path_end = nothing
+    xy_parent = Dict()
+    frontier = Queue{Any}()
+    enqueue!(frontier, (nothing, tuple))
+    xy_parent[(nothing, tuple)] = (nothing, tuple)
+    while length(frontier) > 0 && isnothing(valid_path_end)
+        cur_X, cur_y = dequeue!(frontier)
+        for X in Xs
+            (X == cur_X) && continue
+            if !haskey(partition_tuple_sets[X], cur_y[X])
+                partition_tuple_sets[X][cur_y[X]] = Set()
+            end
+            if length(partition_tuple_sets[X][cur_y[X]]) < overall_min_degree
+                valid_path_end = (cur_X, cur_y)
+                @assert X != cur_X
+                @assert cur_y ∉ partition_tuple_sets[X][cur_y[X]] "$(cur_y ∈ partition_tuple_sets[cur_X][cur_y[cur_X]])"
+                push!(partition_tuple_sets[X][cur_y[X]], cur_y)
+                break
+            end
+        end
+        (!isnothing(valid_path_end)) && break
+        for X in Xs
+            for new_y in partition_tuple_sets[X][cur_y[X]]
+                if !haskey(xy_parent, (X, new_y))
+                    xy_parent[(X, new_y)] = (cur_X, cur_y)
+                    enqueue!(frontier, (X, new_y))
+                end
+            end
+        end
+    end
+    if isnothing(valid_path_end)
+        return false
+    end
+    full_path = []
+    cur_X, cur_y = valid_path_end
+    while !isnothing(cur_X)
+        par_X, par_y = xy_parent[(cur_X, cur_y)]
+        push!(full_path, (cur_X, par_y) => (cur_X, cur_y))
+        cur_X, cur_y = par_X, par_y
+    end
+    for ((add_X, add_y), (del_X, del_y)) in full_path
+        if !isnothing(del_X)
+            delete!(partition_tuple_sets[del_X][del_y[del_X]], del_y)
+        end
+        push!(partition_tuple_sets[add_X][add_y[add_X]], add_y)
+    end
+    return true
+end
+
+function _optimal_partition(data::Vector{Vector{UInt}}, order::Int)
+    data = deepcopy(data)
     attribute_set = collect(1:length(data[1]))
     Xs = Set([X for X in combinations(attribute_set, order)])
-    degrees = counter(Any)
+    tuples = Set()
+    for (i, tuple) in enumerate(data)
+        append!(tuple, i)
+        @assert tuple ∉ tuples
+        push!(tuples, tuple)
+    end
+    partition_tuple_sets = Dict(X=>Dict() for X in Xs)
+    overall_min_degree = 0
     for tuple in data
-        for X in Xs
-            inc!(degrees, tuple[X])
+        #=
+        found_path = _process_zero_hop_augmenting_path(tuple, partition_tuple_sets, Xs, overall_min_degree)
+        if !found_path
+            found_path = _process_one_hop_augmenting_path(tuple, partition_tuple_sets, Xs, overall_min_degree)
+        end
+        if !found_path
+            found_path = _process_two_hop_augmenting_path(tuple, partition_tuple_sets, Xs, overall_min_degree)
+        end =#
+        found_path = _process_augmenting_path(tuple, partition_tuple_sets, Xs, overall_min_degree)
+        if !found_path
+            overall_min_degree += 1
+            X = rand(Xs)
+            push!(partition_tuple_sets[X][tuple[X]], tuple)
         end
     end
 
-    partitions = Dict(X=>[] for X in Xs)
-    partition_counters = Dict(X=>counter(Vector{String}) for X in Xs)
-    for tuple in data
-        min_degree = Inf
-        min_X = nothing
-        for X in Xs
-            if min_degree > partition_counters[X][tuple[X]]
-                min_degree = partition_counters[X][tuple[X]]
-                min_X = X
-            end
-        end
-        inc!(partition_counters[min_X], tuple[min_X])
-        push!(partitions[min_X], tuple)
+    partitions = Dict(X=>Set{Vector{UInt}}() for X in Xs)
+    for X in Xs
+        partitions[X] = union(values(partition_tuple_sets[X])...)
     end
 
     partition_dcs = Dict()
     max_gdc = -1
     for (X, partition) in partitions
-        partition_degrees = counter(Any)
+        partition_degrees = counter(Vector{UInt})
         for tuple in partition
             inc!(partition_degrees, tuple[X])
         end
@@ -162,26 +347,25 @@ function _greedy_partition(data::Vector{Vector{String}}, order::Int)
 
     regular_dcs = Dict()
     for X in Xs
-        degrees = counter(Any)
+        degrees = counter(Vector{UInt})
         for tuple in data
             inc!(degrees, tuple[X])
         end
         regular_dcs[X] = maximum(values(degrees))
     end
-
     return (max_gdc=max_gdc, partition_dcs=partition_dcs, regular_dcs=regular_dcs, partitions=partitions)
 end
 
 function make_attributes_disjoint(data)
     new_data = []
     for tuple in data
-        new_tuple = [string(tuple[i]) * "_" * string(i) for i in eachindex(tuple)]
+        new_tuple = [hash(tuple[i]) + i for i in eachindex(tuple)]
         push!(new_data, new_tuple)
     end
     return new_data
 end
 
-function remove_key_attributes(data)
+function remove_key_attributes(data::Vector{Vector{UInt}})
     attribute_set = collect(1:length(data[1]))
     regular_dcs = Dict()
     for X in attribute_set
@@ -208,7 +392,7 @@ end
 
 
 function get_constraint_and_partition(data, order::Int; method::PARTITION_METHOD=degree)
-    data::Vector{Vector{String}} = make_attributes_disjoint(data)
+    data::Vector{Vector{UInt}} = make_attributes_disjoint(data)
     data = remove_key_attributes(data)
     if method == degree
         return _degree_based_partition(data, order)
@@ -216,6 +400,8 @@ function get_constraint_and_partition(data, order::Int; method::PARTITION_METHOD
         return _greedy_partition(data, order)
     elseif method == annealing
             return _annealing_based_partition(data, order)
+    elseif method == optimal
+            return _optimal_partition(data, order)
     else
         throw(ErrorException(string(method) * " Not Implemented"))
     end
