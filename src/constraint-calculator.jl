@@ -177,112 +177,58 @@ function _greedy_partition(data::Vector{Vector{UInt}}, order::Int)
     return (max_gdc=best_gdc, partition_dcs=best_partition_dcs, regular_dcs=regular_dcs, partitions=best_partitions)
 end
 
-
-function _process_zero_hop_augmenting_path(tuple, partition_tuple_sets, Xs, overall_min_degree)
-    for X1 in Xs
-        if !haskey(partition_tuple_sets[X1], tuple[X1])
-            partition_tuple_sets[X1][tuple[X1]] = Set([tuple])
-            return true
-        end
-        if length(partition_tuple_sets[X1][tuple[X1]]) < overall_min_degree
-            push!(partition_tuple_sets[X1][tuple[X1]], tuple)
-            return true
-        end
-    end
-    return false
-end
-
-function _process_one_hop_augmenting_path(tuple, partition_tuple_sets, Xs, overall_min_degree)
-    for X1 in Xs
-        for y1 in partition_tuple_sets[X1][tuple[X1]]
-            for X2 in Xs
-                if !haskey(partition_tuple_sets[X2], y1[X2])
-                    partition_tuple_sets[X2][y1[X2]] = Set([y1])
-                    push!(partition_tuple_sets[X1][tuple[X1]], tuple)
-                    delete!(partition_tuple_sets[X1][tuple[X1]], y1)
-                    return true
-                end
-                if length(partition_tuple_sets[X2][y1[X2]]) < overall_min_degree
-                    push!(partition_tuple_sets[X2][y1[X2]], y1)
-                    push!(partition_tuple_sets[X1][tuple[X1]], tuple)
-                    delete!(partition_tuple_sets[X1][tuple[X1]], y1)
-                    return true
-                end
-            end
-        end
-    end
-    return false
-end
-
-function _process_two_hop_augmenting_path(tuple, partition_tuple_sets, Xs, overall_min_degree)
-    visited_ys = Set{UInt}()
-    for X1 in Xs
-        for y1 in partition_tuple_sets[X1][tuple[X1]]
-            for X2 in Xs
-                for y2 in partition_tuple_sets[X2][y1[X2]]
-                    if hash(y2) in visited_ys
-                        continue
-                    end
-                    for X3 in Xs
-                        if !haskey(partition_tuple_sets[X3], y2[X3])
-                            push!(partition_tuple_sets[X1][tuple[X1]], tuple)
-                            delete!(partition_tuple_sets[X1][tuple[X1]], y1)
-                            push!(partition_tuple_sets[X2][y1[X2]], y1)
-                            delete!(partition_tuple_sets[X2][y1[X2]], y2)
-                            partition_tuple_sets[X3][y2[X3]] = Set([y2])
-                            return true
-                        end
-                        if length(partition_tuple_sets[X3][y2[X3]]) < overall_min_degree
-                            push!(partition_tuple_sets[X1][tuple[X1]], tuple)
-                            delete!(partition_tuple_sets[X1][tuple[X1]], y1)
-                            push!(partition_tuple_sets[X2][y1[X2]], y1)
-                            delete!(partition_tuple_sets[X2][y1[X2]], y2)
-                            push!(partition_tuple_sets[X3][y2[X3]], y2)
-                            return true
-                        end
-                    end
-                    push!(visited_ys, hash(y2))
-                end
-            end
-        end
-    end
-    return false
-end
-
 function _process_augmenting_path(tuple, partition_tuple_sets, Xs, overall_min_degree)
+    for X in Xs
+        if !haskey(partition_tuple_sets[X], tuple[X])
+            partition_tuple_sets[X][tuple[X]] = Set()
+        end
+        if length(partition_tuple_sets[X][tuple[X]]) < overall_min_degree
+            push!(partition_tuple_sets[X][tuple[X]], tuple)
+            return true
+        end
+    end
+
     valid_path_end = nothing
-    xy_parent = Dict()
-    frontier = Queue{Any}()
+    XY_PAIR = Tuple{Union{Nothing, UInt},Vector{UInt}}
+    xy_parent = Dict{XY_PAIR, XY_PAIR}()
+    visited_X = Set{Tuple{UInt, UInt}}()
+    frontier = Queue{XY_PAIR}()
     enqueue!(frontier, (nothing, tuple))
     xy_parent[(nothing, tuple)] = (nothing, tuple)
     while length(frontier) > 0 && isnothing(valid_path_end)
         cur_X, cur_y = dequeue!(frontier)
         for X in Xs
-            (X == cur_X) && continue
-            if !haskey(partition_tuple_sets[X], cur_y[X])
-                partition_tuple_sets[X][cur_y[X]] = Set()
-            end
-            if length(partition_tuple_sets[X][cur_y[X]]) < overall_min_degree
-                valid_path_end = (cur_X, cur_y)
-                @assert X != cur_X
-                @assert cur_y ∉ partition_tuple_sets[X][cur_y[X]] "$(cur_y ∈ partition_tuple_sets[cur_X][cur_y[cur_X]])"
-                push!(partition_tuple_sets[X][cur_y[X]], cur_y)
-                break
-            end
-        end
-        (!isnothing(valid_path_end)) && break
-        for X in Xs
+            # If we've seen it before, skip.
+            ((X, cur_y[X]) in visited_X) && continue
             for new_y in partition_tuple_sets[X][cur_y[X]]
-                if !haskey(xy_parent, (X, new_y))
-                    xy_parent[(X, new_y)] = (cur_X, cur_y)
-                    enqueue!(frontier, (X, new_y))
+                # If we've seen it before, skip.
+                if haskey(xy_parent, (X, new_y))
+                    continue
                 end
+                # Check whether new_y is a good stopping place.
+                for X2 in Xs
+                    if !haskey(partition_tuple_sets[X2], new_y[X2])
+                        partition_tuple_sets[X2][new_y[X2]] = Set()
+                    end
+                    if length(partition_tuple_sets[X2][new_y[X2]]) < overall_min_degree
+                        valid_path_end = (X, new_y)
+                        push!(partition_tuple_sets[X2][new_y[X2]], new_y)
+                        break
+                    end
+                end
+                xy_parent[(X, new_y)] = (cur_X, cur_y)
+                (!isnothing(valid_path_end)) && break
+                enqueue!(frontier, (X, new_y))
             end
+            push!(visited_X, (X, cur_y[X]))
+            (!isnothing(valid_path_end)) && break
         end
     end
     if isnothing(valid_path_end)
         return false
     end
+
+    # Follow the BFS tree to find the augmenting path to our new tuple.
     full_path = []
     cur_X, cur_y = valid_path_end
     while !isnothing(cur_X)
@@ -290,6 +236,8 @@ function _process_augmenting_path(tuple, partition_tuple_sets, Xs, overall_min_d
         push!(full_path, (cur_X, par_y) => (cur_X, cur_y))
         cur_X, cur_y = par_X, par_y
     end
+
+    # Do the adds & deletes implied by the path.
     for ((add_X, add_y), (del_X, del_y)) in full_path
         if !isnothing(del_X)
             delete!(partition_tuple_sets[del_X][del_y[del_X]], del_y)
@@ -299,27 +247,21 @@ function _process_augmenting_path(tuple, partition_tuple_sets, Xs, overall_min_d
     return true
 end
 
-function _optimal_partition(data::Vector{Vector{UInt}}, order::Int)
+function _optimal_partition(data::Vector{Vector{UInt}})
     data = deepcopy(data)
     attribute_set = collect(1:length(data[1]))
-    Xs = Set([X for X in combinations(attribute_set, order)])
+    Xs = Set([X[1] for X in combinations(attribute_set, 1)])
     tuples = Set()
     for (i, tuple) in enumerate(data)
         append!(tuple, i)
         @assert tuple ∉ tuples
         push!(tuples, tuple)
     end
-    partition_tuple_sets = Dict(X=>Dict() for X in Xs)
+    X_TYPE = UInt
+    Y_TYPE = Vector{UInt}
+    partition_tuple_sets = Dict{X_TYPE, Dict{X_TYPE, Set{Y_TYPE}}}(X=>Dict{X_TYPE, Set{Y_TYPE}}() for X in Xs)
     overall_min_degree = 0
     for tuple in data
-        #=
-        found_path = _process_zero_hop_augmenting_path(tuple, partition_tuple_sets, Xs, overall_min_degree)
-        if !found_path
-            found_path = _process_one_hop_augmenting_path(tuple, partition_tuple_sets, Xs, overall_min_degree)
-        end
-        if !found_path
-            found_path = _process_two_hop_augmenting_path(tuple, partition_tuple_sets, Xs, overall_min_degree)
-        end =#
         found_path = _process_augmenting_path(tuple, partition_tuple_sets, Xs, overall_min_degree)
         if !found_path
             overall_min_degree += 1
@@ -328,7 +270,7 @@ function _optimal_partition(data::Vector{Vector{UInt}}, order::Int)
         end
     end
 
-    partitions = Dict(X=>Set{Vector{UInt}}() for X in Xs)
+    partitions = Dict(X=>Set{Y_TYPE}() for X in Xs)
     for X in Xs
         partitions[X] = union(values(partition_tuple_sets[X])...)
     end
@@ -336,7 +278,7 @@ function _optimal_partition(data::Vector{Vector{UInt}}, order::Int)
     partition_dcs = Dict()
     max_gdc = -1
     for (X, partition) in partitions
-        partition_degrees = counter(Vector{UInt})
+        partition_degrees = counter(UInt)
         for tuple in partition
             inc!(partition_degrees, tuple[X])
         end
@@ -347,7 +289,7 @@ function _optimal_partition(data::Vector{Vector{UInt}}, order::Int)
 
     regular_dcs = Dict()
     for X in Xs
-        degrees = counter(Vector{UInt})
+        degrees = counter(UInt)
         for tuple in data
             inc!(degrees, tuple[X])
         end
@@ -401,7 +343,8 @@ function get_constraint_and_partition(data, order::Int; method::PARTITION_METHOD
     elseif method == annealing
             return _annealing_based_partition(data, order)
     elseif method == optimal
-            return _optimal_partition(data, order)
+            @profile _optimal_partition(data)
+            return _optimal_partition(data)
     else
         throw(ErrorException(string(method) * " Not Implemented"))
     end

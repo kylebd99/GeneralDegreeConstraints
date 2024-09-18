@@ -11,22 +11,11 @@ datasets = ["data/wordnet.csv",
             "data/movie_keyword.csv",
             "data/movie_info.csv",
             "data/cast_info.csv",
-            "data/census13.csv",
-            "data/forest10.csv",
-            "data/power7.csv",
-            "data/dmv11.csv",
             ]
-datasets = ["data/wordnet.csv",
-"data/yeast.csv",
-"data/aids.csv",
-"data/dblp.csv",
-"data/postLinks.csv",
-"data/comments.csv",
-"data/movie_companies.csv",
-"data/census13.csv",
-"data/forest10.csv",
-"data/power7.csv",
-]
+
+datasets = ["data/postHistory.csv",
+            "data/badges.csv",
+            "data/votes.csv"]
 
 for dataset in datasets
     data = csv_to_vec_of_vec(dataset)
@@ -34,6 +23,7 @@ for dataset in datasets
     println("GREEDY:")
     result = get_constraint_and_partition(data, 1; method=greedy)
     println("Max GDC: ", result.max_gdc)
+    println("Max DC: ", maximum(values(result.regular_dcs)))
     println("Min DC: ", minimum(values(result.regular_dcs)))
     println("Regular DCs: ", result.regular_dcs)
     println("Partition DCs: ", result.partition_dcs)
